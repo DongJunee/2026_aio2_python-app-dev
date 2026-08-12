@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <title>도서 목록</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f5f6f8;
+            padding: 40px;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+
+        button:hover {
+            background-color: #3e8e41;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            background-color: #4CAF50;
+            color: white;
+            padding: 14px;
+        }
+
+        td {
+            padding: 12px;
+            text-align: center;
+            border-bottom: 1px solid #ddd;
+        }
+
+        tbody tr:hover {
+            background-color: #f1f1f1;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+
+        <h1>📚 도서 목록</h1>
+
+        <button id="loadBtn">목록 불러오기</button>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>제목</th>
+                    <th>저자</th>
+                    <th>출판년도</th>
+                </tr>
+            </thead>
+
+            <tbody id="result">
+                <!-- 여기에 책 목록이 들어갑니다 -->
+            </tbody>
+        </table>
+
+    </div>
+
+
+    <script>
+        document.getElementById("loadBtn").addEventListener("click", async () => {
+
+            // FastAPI의 /books에서 데이터 가져오기
+            const books = await (await fetch("/books")).json();
+
+            const tbody = document.getElementById("result");
+
+            // 기존 내용 삭제
+            tbody.innerHTML = "";
+
+            // 책 목록 반복
+            for (const book of books) {
+
+                const tr = document.createElement("tr");
+
+                tr.innerHTML = `
+                    <td>${book.id}</td>
+                    <td>${book.title}</td>
+                    <td>${book.author}</td>
+                    <td>${book.year}</td>
+                `;
+
+                tbody.appendChild(tr);
+            }
+        });
+    </script>
+
+</body>
+</html>
