@@ -1,56 +1,48 @@
 from fastapi import FastAPI, status, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from schemas import ExternalBook, WeatherResponse, BookResponse, BookCreate, GoogleBooks
+from external_api import fetch_weather, fetch_books, load_fallback_books
 from fastapi.staticfiles import StaticFiles
+import httpx
 
-
-app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-
-books =[
-    {"id": 1, "title": "파이썬 입문", "author": "김철수", "year": 2021, "tags": [],"publisher": None},
-    {"id": 2, "title": "FastAPI 실전", "author": "이영희", "year": 2023, "tags": [],"publisher": None},
-    {"id": 3, "title": "파이썬 웹개발", "author": "김철수", "year": 2022, "tags": [],"publisher": None},
-    {"id": 4, "title": "데이터 분석 기초", "author": "박민수", "year": 2020, "tags": [],"publisher": None},
-    {"id": 5, "title": "FastAPI로 배우는 백엔드", "author": "이영희", "year": 2024, "tags": [],"publisher": None},
+tags_metadata = [
+    {"name": "도서", "description": "도서 등록, 조회, 검색"},
+    {"name": "외부 연동", "description": "Google Books와 날씨 API 연동"},
+    {"name": "시스템", "description": "서버 상태 확인"},
 ]
 
+app = FastAPI(
+    title="도서 관리 API",
+    description="도서를 등록·조회하고 외부 검색으로 정보를 가져오는 API",
+    version="1.0.0",
+    contact={"name": "동준", "email": "dong@example.com"},
+    openapi_tags=tags_metadata
+)
 
-class Publisher(BaseModel):
-    name: str
-    city: str = "서울"
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-class BookCreate(BaseModel):
-    title : str = Field(min_length = 1, max_length = 50)
-    author : str = Field(min_length = 1, max_length = 20)
-    year : int = Field(ge=1900, le=2026)
-    tags: list[str] = Field(default_factory=list)
-    publisher: Publisher | None = None
+books = [
+    {"id": 1, "title": "파이썬 입문", "author": "김철수", "year": 2021},
+    {"id": 2, "title": "FastAPI 실전", "author": "이영희", "year": 2023},
+    {"id": 3, "title": "파이썬 웹개발", "author": "김철수", "year": 2022},
+    {"id": 4, "title": "데이터 분석 기초", "author": "박민수", "year": 2020},
+    {"id": 5, "title": "FastAPI로 배우는 백엔드", "author": "이영희", "year": 2024},
+]
 
-    @field_validator("title")
-    @classmethod
-    def strip_title(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-           raise ValueError("제목은 공백일 수 없습니다")
-        return v
+@app.get("/", tags=["시스템"])
+def read_root():
+    return {"message": "Hello World!!!"}
 
-class BookResponse(BookCreate):
-    id: int
-
-@app.get("/")
+@app.get("/health", tags=["시스템"])
 def health():
-    return {"message": "Hello!!!!!!!!!!!!!!!"}
+    return {"status" : "ok"}
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-    
-@app.get("/info") # 요청 파라미터
+@app.get("/info", tags=["시스템"])
 def info():
-    return {"name": "도서 관리 API", "version": "0.1.0"}
+    return {"name": "도서관리API", "version":"0.1.0"}
 
-@app.get("/books", response_model=list[BookResponse])
+
+#도서의 목록을 제공하는 엔드포인트
+@app.get("/books", response_model=list[BookResponse], tags=["도서"])
 def list_books():
     return books
 
@@ -61,42 +53,130 @@ def search_books(keyword: str = ""):
     return [b for b in books if keyword in b["title"]]
 
 @app.get("/books/filter")
-def filter_books(keyword: str="", sort: str=""):
+def filter_books(keyword: str="", sort: str = ""):
     result = books
-    #for book in books:
+    #for book in books:  
     # 리스트 컴프리헨션 - for + if > 리스트
-    if keyword:
-        result = [b for b in result if b["author"] == keyword]
+    result = [b for b in result if b['author'] == keyword]
     if sort == "year":
-        result = sorted(result, key = lambda b:b["year"])
+        result = sorted(result, key= lambda b: b["year"])
     return result
 
 @app.get("/books/page")
-def page_books(skip: int = 0, limit: int = 2):
-    return books[skip: skip + limit]
+def page_books(skip: int=0, limit: int=2):
+    return books[skip: skip+limit]
 
-
-@app.get("/books/{book_id}", response_model=BookResponse)
-def read_book(book_id: int):
-    for book in books:
-        if book_id == book['id']:
-            return book
-        # return {"error":"not found"}
-    raise HTTPException(status_code=404, detail="도서를 찾을 수 없습니다")
-
-
-@app.post("/books", response_model=BookResponse, status_code=status.HTTP_201_CREATED)
+  
+@app.post("/books", response_model=BookResponse, 
+          status_code=status.HTTP_201_CREATED,
+          tags=["도서"],
+          summary="도서 등록",
+          response_description="등록된 도서 정보"
+          )
 def create_book(book: BookCreate):
+    """
+    새 도서를 내 목록에 등록합니다.
+
+    - **title**: 1자 이상 100자 이하. 앞뒤 공백은 자동 제거됩니다
+    - **author**: 1자 이상 50자 이하
+    - **year**: 1900 이상 2100 이하
+    - **tags**: 선택. 문자열 목록
+    - **publisher**: 선택. 출판사 정보
+
+    같은 제목이 이미 있으면 409를 반환합니다.
+    """
+    for b in books:
+        if b['title'] == book.title :
+            raise HTTPException(status_code=409, detail='기존에 등록된 도서입니다.!')
+        
+    new_id = max([ b["id"] for b in books ], default=0) +1
+    new_book =  {"id": new_id, **book.model_dump()}
+    books.append( new_book )
+    
+    return new_book
+
+# 테스트 시나리오 
+# 1. 새로운 책 등록
+# 2. 책 목록을 조회
+# 3. 등록한 책을 검색
+
+
+# @app.get("/weather/raw")
+# async def weather_raw():
+#     async with httpx.AsyncClient(timeout=5.0) as client:
+#         response = await client.get(
+#             "https://api.open-meteo.com/v1/forecast",
+#             params={
+#                 "latitude": 36.8,
+#                 "longitude": 127.1,
+#                 "current": "temperature_2m",
+#             },
+#         )
+#         return response.json()
+
+
+@app.get("/weather", response_model=WeatherResponse, tags=["외부 연동"])
+async def weather(latitude: float= 36.8, longitude: float=127.1):
+    return await fetch_weather(latitude, longitude)
+
+# @app.get("/books/external", response_model=list[GoogleBooks])
+# async def search_external_books(keyword: str, limit:int=5):
+#     return await fetch_books(keyword, limit)
+
+@app.get("/books/external", response_model=list[ExternalBook])
+async def search_external_books(keyword: str, limit: int = 5, fallback: bool = False):
+    """
+    Google Books에서 도서를 검색합니다.
+
+    - **keyword**: 검색어. 한국어도 가능합니다
+    - **limit**: 가져올 개수. 기본 5
+    - **fallback**: true이면 외부 API 실패 시 예비 데이터를 반환합니다
+
+    외부 서비스에 의존하므로 502, 504가 발생할 수 있습니다.
+    """
+    try:
+        return await fetch_books(keyword, limit)
+    except httpx.TimeoutException:
+        if fallback:
+            return load_fallback_books()
+        raise HTTPException(status_code=504, detail="외부 API 응답이 지연됩니다")
+    except httpx.HTTPStatusError:
+        if fallback:
+            return load_fallback_books()
+        raise HTTPException(status_code=502, detail="외부 API가 오류를 반환했습니다")
+    except httpx.RequestError:
+        if fallback:
+            return load_fallback_books()
+        raise HTTPException(status_code=502, detail="외부 API에 연결할 수 없습니다")
+
+@app.post("/books/from-external", response_model=BookResponse, status_code=201)
+def create_from_external(book: ExternalBook):
     for b in books:
         if b["title"] == book.title:
             raise HTTPException(status_code=409, detail="이미 등록된 제목입니다")
 
-    new_id = max([b["id"] for b in books], default = 0) + 1
-    # new_book = {'id':new_id,
-    #             'title': book.title,
-    #             'author': book.author,
-    #             'year': book.year
-    #             }
-    new_book = {'id': new_id, **book.model_dump()}
+    year = 2000
+    if book.published_date[:4].isdigit():
+        year = int(book.published_date[:4])
+
+    new_id = max([b["id"] for b in books], default=0) + 1
+    new_book = {
+        "id": new_id,
+        "title": book.title,
+        "author": book.authors[0] if book.authors else "미상",
+        "year": year,
+        "tags": ["외부검색"],
+        "publisher": None,
+    }
     books.append(new_book)
     return new_book
+
+# 항상 마지막
+@app.get("/books/{book_id}", response_model=BookResponse, tags=["도서"],
+         responses={404 : {"description" : "해당 번호의 도서를 찾을 수 없습니다."}})
+def read_book(book_id: int):
+    for book in books:
+        if book_id == book['id'] :
+            return book
+    #return {"error": "not found"}
+    raise HTTPException(status_code=404, detail="우리책이 아니에요")
